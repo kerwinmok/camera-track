@@ -28,6 +28,25 @@ def compute_head_box(x: int, y: int, w: int, h: int, frame_w: int, frame_h: int)
     return hx, hy, hw, hh
 
 
+def interpolate_box(
+    previous: Tuple[int, int, int, int],
+    current: Tuple[int, int, int, int],
+    alpha: float,
+) -> Tuple[int, int, int, int]:
+    px, py, pw, ph = previous
+    cx, cy, cw, ch = current
+    return (
+        int(px * (1.0 - alpha) + cx * alpha),
+        int(py * (1.0 - alpha) + cy * alpha),
+        int(pw * (1.0 - alpha) + cw * alpha),
+        int(ph * (1.0 - alpha) + ch * alpha),
+    )
+
+
+def area(box: Tuple[int, int, int, int]) -> int:
+    return box[2] * box[3]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Draw white head boxes on detected people in a video source."
@@ -49,6 +68,18 @@ def main() -> None:
         default=5,
         help="Minimum neighbors for detection confidence.",
     )
+    parser.add_argument(
+        "--hold-frames",
+        type=int,
+        default=12,
+        help="Keep last head box this many frames when detection drops.",
+    )
+    parser.add_argument(
+        "--smooth-alpha",
+        type=float,
+        default=0.45,
+        help="Tracking smoothness from 0.0 to 1.0 (higher reacts faster).",
+    )
     args = parser.parse_args()
 
     source = parse_source(args.source)
@@ -64,6 +95,10 @@ def main() -> None:
     print("running head box demo")
     print("press q to quit")
 
+    smooth_alpha = clamp(int(args.smooth_alpha * 1000), 0, 1000) / 1000.0
+    tracked_box: Union[Tuple[int, int, int, int], None] = None
+    frames_since_seen = 0
+
     while True:
         ok, frame = cap.read()
         if not ok:
@@ -78,14 +113,35 @@ def main() -> None:
         )
 
         frame_h, frame_w = frame.shape[:2]
+        candidate_boxes = [
+            compute_head_box(x, y, w, h, frame_w, frame_h)
+            for (x, y, w, h) in faces
+        ]
 
-        for (x, y, w, h) in faces:
-            hx, hy, hw, hh = compute_head_box(x, y, w, h, frame_w, frame_h)
+        if candidate_boxes:
+            # Use the largest visible face as the tracked head in single-person camera view.
+            current_box = max(candidate_boxes, key=area)
+            if tracked_box is None:
+                tracked_box = current_box
+            else:
+                tracked_box = interpolate_box(tracked_box, current_box, smooth_alpha)
+            frames_since_seen = 0
+        else:
+            frames_since_seen += 1
+            if frames_since_seen > args.hold_frames:
+                tracked_box = None
+
+        if tracked_box is not None:
+            hx, hy, hw, hh = tracked_box
             cv2.rectangle(frame, (hx, hy), (hx + hw, hy + hh), (255, 255, 255), 2)
+
+        status = "tracking" if tracked_box is not None else "waiting"
+        if tracked_box is not None and frames_since_seen > 0:
+            status = f"tracking (hold {frames_since_seen}/{args.hold_frames})"
 
         cv2.putText(
             frame,
-            f"heads detected: {len(faces)}",
+            f"heads detected: {len(faces)} | {status}",
             (10, 30),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.8,
