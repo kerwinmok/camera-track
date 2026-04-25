@@ -1,2 +1,44 @@
 # camera-track
-basic camera tracking
+
+simple local demo that reads a video source and draws a white box around detected heads.
+
+this is detection only.
+it does not move the mouse, click, control input, or automate anything.
+
+## requirements
+
+- python 3.9+
+- pip
+
+## install
+
+```bash
+pip install -r requirements.txt
+```
+
+## run with laptop camera
+
+```bash
+python head_box_demo.py --source 0
+```
+
+## run with a video file
+
+```bash
+python head_box_demo.py --source path/to/video.mp4
+```
+
+## controls
+
+- press `q` to exit
+
+## tuning
+
+- `--scale-factor` smaller values can detect more but run slower
+- `--min-neighbors` larger values reduce false positives but can miss detections
+
+example:
+
+```bash
+python head_box_demo.py --source 0 --scale-factor 1.05 --min-neighbors 6
+```
