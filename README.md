@@ -2,6 +2,8 @@
 
 simple local demo that reads a video source and draws a white box around detected heads.
 
+it uses both frontal-face and profile-face haar cascades, so side-facing heads are detected better than frontal-only mode.
+
 the app now keeps tracking a head box smoothly while your head is visible and holds the box briefly when detection drops for a few frames.
 
 this is detection only.

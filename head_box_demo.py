@@ -1,5 +1,5 @@
 import argparse
-from typing import Tuple, Union
+from typing import List, Tuple, Union
 
 import cv2
 
@@ -47,6 +47,38 @@ def area(box: Tuple[int, int, int, int]) -> int:
     return box[2] * box[3]
 
 
+def detect_profile_faces(
+    gray,
+    profile_cascade: cv2.CascadeClassifier,
+    scale_factor: float,
+    min_neighbors: int,
+) -> List[Tuple[int, int, int, int]]:
+    direct_profiles = profile_cascade.detectMultiScale(
+        gray,
+        scaleFactor=scale_factor,
+        minNeighbors=min_neighbors,
+        minSize=(40, 40),
+    )
+
+    flipped_gray = cv2.flip(gray, 1)
+    flipped_profiles = profile_cascade.detectMultiScale(
+        flipped_gray,
+        scaleFactor=scale_factor,
+        minNeighbors=min_neighbors,
+        minSize=(40, 40),
+    )
+
+    frame_w = gray.shape[1]
+    profiles: List[Tuple[int, int, int, int]] = []
+    for (x, y, w, h) in direct_profiles:
+        profiles.append((int(x), int(y), int(w), int(h)))
+    for (x, y, w, h) in flipped_profiles:
+        mapped_x = frame_w - int(x) - int(w)
+        profiles.append((mapped_x, int(y), int(w), int(h)))
+
+    return profiles
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Draw white head boxes on detected people in a video source."
@@ -92,6 +124,11 @@ def main() -> None:
     if face_cascade.empty():
         raise RuntimeError("Could not load haarcascade_frontalface_default.xml")
 
+    profile_path = cv2.data.haarcascades + "haarcascade_profileface.xml"
+    profile_cascade = cv2.CascadeClassifier(profile_path)
+    if profile_cascade.empty():
+        raise RuntimeError("Could not load haarcascade_profileface.xml")
+
     print("running head box demo")
     print("press q to quit")
 
@@ -105,17 +142,25 @@ def main() -> None:
             break
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = face_cascade.detectMultiScale(
+        frontal_faces = face_cascade.detectMultiScale(
             gray,
             scaleFactor=args.scale_factor,
             minNeighbors=args.min_neighbors,
             minSize=(40, 40),
         )
+        profile_faces = detect_profile_faces(
+            gray,
+            profile_cascade,
+            args.scale_factor,
+            args.min_neighbors,
+        )
 
         frame_h, frame_w = frame.shape[:2]
+        all_faces = [(int(x), int(y), int(w), int(h)) for (x, y, w, h) in frontal_faces]
+        all_faces.extend(profile_faces)
         candidate_boxes = [
             compute_head_box(x, y, w, h, frame_w, frame_h)
-            for (x, y, w, h) in faces
+            for (x, y, w, h) in all_faces
         ]
 
         if candidate_boxes:
@@ -141,7 +186,7 @@ def main() -> None:
 
         cv2.putText(
             frame,
-            f"heads detected: {len(faces)} | {status}",
+            f"heads detected: {len(all_faces)} | {status}",
             (10, 30),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.8,
