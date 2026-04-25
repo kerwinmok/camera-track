@@ -5,17 +5,19 @@ import cv2
 
 
 def parse_source(value: str) -> Union[int, str]:
+    # allow camera index or file path
     if value.isdigit():
         return int(value)
     return value
 
 
 def clamp(val: int, low: int, high: int) -> int:
+    # keep values inside a safe range
     return max(low, min(val, high))
 
 
 def compute_head_box(x: int, y: int, w: int, h: int, frame_w: int, frame_h: int) -> Tuple[int, int, int, int]:
-    # Expand a face rectangle into a head-focused rectangle.
+    # expand face bounds into a head-focused box
     hx = int(x - 0.10 * w)
     hy = int(y - 0.35 * h)
     hw = int(1.20 * w)
@@ -33,6 +35,7 @@ def interpolate_box(
     current: Tuple[int, int, int, int],
     alpha: float,
 ) -> Tuple[int, int, int, int]:
+    # smooth movement between old and new box positions
     px, py, pw, ph = previous
     cx, cy, cw, ch = current
     return (
@@ -44,6 +47,7 @@ def interpolate_box(
 
 
 def area(box: Tuple[int, int, int, int]) -> int:
+    # prefer larger faces in single-person camera view
     return box[2] * box[3]
 
 
@@ -53,6 +57,7 @@ def detect_profile_faces(
     scale_factor: float,
     min_neighbors: int,
 ) -> List[Tuple[int, int, int, int]]:
+    # detect side faces in normal orientation
     direct_profiles = profile_cascade.detectMultiScale(
         gray,
         scaleFactor=scale_factor,
@@ -60,6 +65,7 @@ def detect_profile_faces(
         minSize=(40, 40),
     )
 
+    # detect side faces in mirrored orientation for the opposite direction
     flipped_gray = cv2.flip(gray, 1)
     flipped_profiles = profile_cascade.detectMultiScale(
         flipped_gray,
@@ -68,6 +74,7 @@ def detect_profile_faces(
         minSize=(40, 40),
     )
 
+    # map mirrored detections back to original coordinates
     frame_w = gray.shape[1]
     profiles: List[Tuple[int, int, int, int]] = []
     for (x, y, w, h) in direct_profiles:
@@ -80,6 +87,7 @@ def detect_profile_faces(
 
 
 def main() -> None:
+    # parse runtime options
     parser = argparse.ArgumentParser(
         description="Draw white head boxes on detected people in a video source."
     )
@@ -114,11 +122,13 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    # open camera stream or video file
     source = parse_source(args.source)
     cap = cv2.VideoCapture(source)
     if not cap.isOpened():
         raise RuntimeError(f"Could not open video source: {args.source}")
 
+    # load frontal and profile detectors
     cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
     face_cascade = cv2.CascadeClassifier(cascade_path)
     if face_cascade.empty():
@@ -132,6 +142,7 @@ def main() -> None:
     print("running head box demo")
     print("press q to quit")
 
+    # tracking state for smoothing and temporary hold
     smooth_alpha = clamp(int(args.smooth_alpha * 1000), 0, 1000) / 1000.0
     tracked_box: Union[Tuple[int, int, int, int], None] = None
     frames_since_seen = 0
@@ -142,6 +153,7 @@ def main() -> None:
             break
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        # detect frontal and side-facing faces
         frontal_faces = face_cascade.detectMultiScale(
             gray,
             scaleFactor=args.scale_factor,
@@ -155,6 +167,7 @@ def main() -> None:
             args.min_neighbors,
         )
 
+        # convert face boxes to head boxes
         frame_h, frame_w = frame.shape[:2]
         all_faces = [(int(x), int(y), int(w), int(h)) for (x, y, w, h) in frontal_faces]
         all_faces.extend(profile_faces)
@@ -164,7 +177,7 @@ def main() -> None:
         ]
 
         if candidate_boxes:
-            # Use the largest visible face as the tracked head in single-person camera view.
+            # use the largest visible face as the active track
             current_box = max(candidate_boxes, key=area)
             if tracked_box is None:
                 tracked_box = current_box
@@ -172,11 +185,13 @@ def main() -> None:
                 tracked_box = interpolate_box(tracked_box, current_box, smooth_alpha)
             frames_since_seen = 0
         else:
+            # keep box briefly when detections flicker
             frames_since_seen += 1
             if frames_since_seen > args.hold_frames:
                 tracked_box = None
 
         if tracked_box is not None:
+            # draw white tracking box
             hx, hy, hw, hh = tracked_box
             cv2.rectangle(frame, (hx, hy), (hx + hw, hy + hh), (255, 255, 255), 2)
 
@@ -195,6 +210,7 @@ def main() -> None:
             cv2.LINE_AA,
         )
 
+        # show frame and allow quick exit
         cv2.imshow("camera track - head box demo", frame)
         if (cv2.waitKey(1) & 0xFF) == ord("q"):
             break
